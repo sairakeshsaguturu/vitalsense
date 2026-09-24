@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Vitalsense</title>
+<style>
+:root{--bg:#f4f6f8;--card:#fff;--tx:#12202b;--mu:#5d6b77;--ac:#0b7285;--bd:#dde3e8;--good:#2b8a3e;--fair:#e08e00;--poor:#e8590c;--bad:#c92a2a}
+@media(prefers-color-scheme:dark){:root{--bg:#0f151a;--card:#182027;--tx:#e8eef2;--mu:#93a1ad;--ac:#3bc9db;--bd:#2a353e}}
+*{box-sizing:border-box}body{margin:0;font:15px system-ui,sans-serif;background:var(--bg);color:var(--tx)}
+header{padding:12px 20px;border-bottom:1px solid var(--bd);display:flex;gap:12px;align-items:baseline;flex-wrap:wrap}
+h1{font-size:20px;margin:0}small,.mu{color:var(--mu)}main{max-width:1100px;margin:auto;padding:16px;display:grid;gap:14px}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:14px}
+.top{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:14px}@media(max-width:800px){.top{grid-template-columns:1fr}}
+.cam{position:relative;background:#000;border-radius:10px;overflow:hidden;aspect-ratio:4/3}
+.cam video,.cam canvas{position:absolute;inset:0;width:100%;height:100%;transform:scaleX(-1)}
+.metrics{display:grid;grid-template-columns:1fr 1fr;gap:10px}.m b{display:block;font-size:30px}.m span{font-size:12px;color:var(--mu)}
+button,select,input{font:inherit;padding:7px 12px;border-radius:8px;border:1px solid var(--bd);background:var(--card);color:var(--tx)}
+button{background:var(--ac);color:#fff;border:0;cursor:pointer}button.s{background:var(--card);color:var(--tx);border:1px solid var(--bd)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+#badge{font-weight:700;padding:2px 10px;border-radius:99px;color:#fff;background:var(--mu)}
+canvas.w{width:100%;height:150px;display:block}table{width:100%;border-collapse:collapse}td,th{padding:6px;border-bottom:1px solid var(--bd);text-align:left}
+.tr{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.tr canvas{width:100%;height:110px}
+.demo{background:#fff3bf;color:#5f3b00;border:1px solid #f1c84b;border-radius:9px;padding:9px 11px;font-weight:700}.demo small{color:#76530b;font-weight:500}
+</style></head><body>
+<header><h1>Vitalsense</h1><small>Contactless physiological monitoring with a commodity RGB camera. Experimental prototype - not a medical device; estimates only.</small></header>
+<main>
+<div class="demo">DEMO MODE — SIMULATED VITALS <small>Values and waveform in this mode are generated for prototype demonstration only; they are not camera measurements.</small></div>
+<div class="top">
+ <div class="card"><div class="cam"><video id="v" playsinline muted></video><canvas id="o"></canvas></div>
+  <div class="row" style="margin-top:10px"><select id="cams"></select><button id="go">Start camera</button><button class="s" id="again">New measurement</button></div>
+  <div class="mu" style="font-size:12px;margin-top:6px">Skin patches (colour = measured quality): <b style="color:#2b8a3e">high</b> · <b style="color:#e08e00">medium</b> · <b style="color:#c92a2a">rejected</b> · <b style="color:#8a949c">not scored yet</b></div>
+  <div id="cerr" style="color:var(--bad);margin-top:6px"></div></div>
+ <div class="card"><div class="row" style="margin-bottom:8px"><span id="badge">--</span><b id="phase">Ready</b></div>
+  <div id="msg" class="mu" style="min-height:40px">Start the camera and keep your face in view.</div>
+  <div class="metrics" style="margin-top:8px">
+   <div class="m"><span>Estimated Heart Rate</span><b id="hr">--</b><span id="hrs">BPM</span></div>
+   <div class="m"><span>Estimated Respiratory Rate</span><b id="rr">--</b><span id="rrs">breaths/min</span></div>
+   <div class="m"><span>Signal Quality</span><b id="q">--</b><span id="qs"></span></div>
+   <div class="m"><span>Camera</span><b id="fps">--</b><span id="res"></span></div></div>
+  <div id="stat" class="mu" style="margin-top:8px;line-height:1.6"></div></div></div>
+<div class="card"><b>Pulse waveform</b> <small>(simulated while Demo Mode is active; otherwise estimated from the live camera signal)</small><canvas id="wave" class="w"></canvas></div>
+<div class="card"><div class="row"><b>History</b><input type="date" id="fd"><button class="s" id="clr">All dates</button></div>
+ <div id="sum" class="mu" style="margin:8px 0"></div>
+ <div class="tr"><canvas id="c1"></canvas><canvas id="c2"></canvas><canvas id="c3"></canvas></div>
+ <table><thead><tr><th>Time</th><th>HR</th><th>RR</th><th>Quality</th><th>Duration</th><th></th></tr></thead><tbody id="hist"></tbody></table></div>
+<div class="card" id="dbgc"><b>RPPG DEBUG</b> <small>(temporary developer panel - shows every stage before the consensus engine)</small>
+ <label class="row" style="font-size:13px;margin-top:6px"><input type="checkbox" id="bypass"> DEBUG_BYPASS_PATCH_SIGNAL_GATES (diagnostic only - keeps skin/exposure/chroma gates, drops history/motion/spectral/agreement gates; never used for the reported measurement)</label>
+ <pre id="dbg" style="font:12px/1.5 ui-monospace,monospace;white-space:pre-wrap;margin:8px 0;overflow-x:auto"></pre>
+ <canvas id="dbgT" class="w" style="height:340px"></canvas><canvas id="dbgP" class="w" style="height:160px"></canvas></div>
+<div class="card"><b>Validation mode</b> <small>(compare against a reference device you entered yourself)</small>
+ <div class="row" style="margin:8px 0"><input id="rh" type="number" placeholder="Reference HR" style="width:130px"><input id="vh" type="number" placeholder="Vitalsense HR" style="width:130px"><input id="rr2" type="number" placeholder="Reference RR" style="width:130px"><input id="vr" type="number" placeholder="Vitalsense RR" style="width:130px"><button id="addv">Add pair</button><button class="s" id="clv">Clear</button></div>
+ <div id="val" class="mu"></div></div>
+</main>
+<script src="dsp.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/face_mesh.js" crossorigin="anonymous"></script>
+<script>
+const {CFG,mean,std,resample,fuseWeights,estimateHR,respiratory,assess,summarize,agreementStats,bandpass,detrend,spectralPeak}=VS;
+const $=id=>document.getElementById(id),fs=CFG.fs,now=()=>performance.now()/1000;
+const med=a=>{const s=[...a].sort((x,y)=>x-y);return s.length?s[s.length>>1]:null};
+let expFps='?',loopId=0,pb,pbM,S,stream,running=false,fm,frameT=0,lastVT=-1,BYPASS=false;
+const cvs=document.createElement('canvas'),cx=cvs.getContext('2d',{willReadFrequently:true}),ov=$('o').getContext('2d');
+// pb: PRODUCTION buffer, large ("L") scale patches ONLY. pbM: diagnostic-only buffer, medium ("M") scale patches ONLY - onResults()
+// routes by p.scale so an "M" patch can never be mistaken for an "L" one; pbM never reaches gate()/analyze()'s production path.
+function reset(full){pb={};pbM={};   // id -> {t,r,g,b (raw samples), lum, use (EMA of usable-pixel fraction)}
+ if(full)S={face:'none',fps:0,motion:0,mh:[],lum:0,ema:0,jump:0,fr:[],lc:null,lt:0,lastS:0,hist:[],wave:null,phase:'READY',msg:'',q:null,rr:null,demo:null,
+ run:null,acc:null,paused:false,reacq:null,saved:false,tick:0,rrLast:0,hr:null,recT:0,dbg:null,eff:0,pq:{},pcls:{},pbad:{},pbadCat:{},preg:{},prow:[],pc:null,pmed:null,
+ geo:0,geomRej:0,geomCand:0,geomHist:{},regionCounts:{},patchPx:0,cmp:null,pcBypass:null,scaleCmp:null};
+ else{S.pq={};S.pcls={}}}
+reset(true);
+// ---------- storage (IndexedDB) ----------
+const DB=new Promise((res,rej)=>{try{const o=indexedDB.open('vitalsense',1);o.onupgradeneeded=()=>o.result.createObjectStore('m',{keyPath:'id',autoIncrement:true});o.onsuccess=()=>res(o.result);o.onerror=()=>rej(o.error)}catch(e){rej(e)}});
+const tx=async(m,f)=>{const db=await DB;return new Promise((res,rej)=>{const t=db.transaction('m',m),r=f(t.objectStore('m'));t.oncomplete=()=>res(r.result);t.onerror=()=>rej(t.error)})};
+const load=async()=>{try{return(await tx('readonly',s=>s.getAll())).filter(r=>r&&Number.isFinite(r.heart_rate)&&Number.isFinite(r.timestamp))}catch(e){$('sum').textContent='Local storage unavailable: '+e.message;return[]}};
+// ---------- camera ----------
+async function listCams(){try{const d=(await navigator.mediaDevices.enumerateDevices()).filter(x=>x.kind==='videoinput');let pref='';try{pref=localStorage.vsCam||''}catch(e){}
+ $('cams').innerHTML=d.map((x,i)=>`<option value="${x.deviceId}" ${x.deviceId===pref?'selected':''}>${x.label||'Camera '+(i+1)}</option>`).join('')}catch(e){}}
+async function start(){
+ $('cerr').textContent='';
+ if(!navigator.mediaDevices?.getUserMedia)return $('cerr').textContent='This browser does not support camera access (MediaDevices API).';
+ if(typeof FaceMesh==='undefined')return $('cerr').textContent='Face-tracking library failed to load (internet needed for jsDelivr). Nothing is measured without it.';
+ try{stop();const id=$('cams').value;try{localStorage.vsCam=id}catch(e){}
+  stream=await navigator.mediaDevices.getUserMedia({video:{deviceId:id?{exact:id}:undefined,width:{ideal:640},height:{ideal:480},frameRate:{ideal:30}}});
+  stream.getVideoTracks()[0].onended=()=>{$('cerr').textContent='Camera disconnected. Reconnecting...';running=false;setTimeout(start,2000)};
+  expFps=stream.getVideoTracks()[0].getSettings().frameRate||'?';const v=$('v');v.srcObject=stream;await v.play();await listCams();
+  if(!fm){fm=new FaceMesh({locateFile:f=>'https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4.1633559619/'+f});fm.setOptions({maxNumFaces:2,refineLandmarks:false,minDetectionConfidence:.5,minTrackingConfidence:.5});fm.onResults(onResults)}
+  reset(true);running=true;$('go').textContent='Stop camera';loop()
+ }catch(e){const m={NotAllowedError:'Camera permission denied.',NotFoundError:'No camera found.',NotReadableError:'Camera is in use by another application.',OverconstrainedError:'Selected camera unavailable.'};$('cerr').textContent=m[e.name]||('Camera error: '+e.message)}}
+function stop(){running=false;stream&&stream.getTracks().forEach(t=>{t.onended=null;t.stop()});stream=null;$('go').textContent='Start camera'}
+function loop(){const v=$('v'),id=++loopId;
+ const step=async(ts,m)=>{if(!running||id!==loopId)return;if(!m&&v.currentTime===lastVT)return next();lastVT=v.currentTime;
+  let t=((m&&m.captureTime)||ts)/1000;if(!(Math.abs(t-now())<1))t=now();frameT=t;   // camera capture time, not "when JS got to it"
+  const W=v.videoWidth,H=v.videoHeight;if(cvs.width!==W){cvs.width=W;cvs.height=H}cx.drawImage(v,0,0,W,H);   // snapshot NOW: pixels, timestamp and landmarks refer to the same frame
+  try{await fm.send({image:cvs})}catch(e){$('cerr').textContent='Face tracking error: '+e.message}next()};
+ const next=()=>v.requestVideoFrameCallback?v.requestVideoFrameCallback(step):requestAnimationFrame(x=>step(x));next()}
+// ---------- face mesh -> skin mask -> dense patches ----------
+const OVAL=[10,338,297,332,284,251,389,356,454,323,361,288,397,365,379,378,400,377,152,148,176,149,150,136,172,58,132,93,234,127,162,21,54,103,67,109];
+const EXCL={eyeR:[33,7,163,144,145,153,154,155,133,173,157,158,159,160,161,246],eyeL:[362,382,381,380,374,373,390,249,263,466,388,387,386,385,384,398],
+ browR:[46,53,52,65,55,70,63,105,66,107],browL:[276,283,282,295,285,300,293,334,296,336],
+ lips:[61,146,91,181,84,17,314,405,321,375,291,409,270,269,267,0,37,39,40,185],nose:[98,327,2,1,129,358]};
+const hull=pts=>{const p=[...pts].sort((a,b)=>a[0]-b[0]||a[1]-b[1]),cr=(o,a,b)=>(a[0]-o[0])*(b[1]-o[1])-(a[1]-o[1])*(b[0]-o[0]),Lo=[],Up=[];
+ for(const q of p){while(Lo.length>1&&cr(Lo.at(-2),Lo.at(-1),q)<=0)Lo.pop();Lo.push(q)}
+ for(const q of p.slice().reverse()){while(Up.length>1&&cr(Up.at(-2),Up.at(-1),q)<=0)Up.pop();Up.push(q)}return Lo.slice(0,-1).concat(Up.slice(0,-1))};
+const grow=(h,k)=>{const c=[mean(h.map(q=>q[0])),mean(h.map(q=>q[1]))];return h.map(q=>[c[0]+(q[0]-c[0])*k,c[1]+(q[1]-c[1])*k])};
+const inside=(h,x,y)=>{let c=false;for(let i=0,j=h.length-1;i<h.length;j=i++){const a=h[i],b=h[j];if((a[1]>y)!==(b[1]>y)&&x<(b[0]-a[0])*(y-a[1])/(b[1]-a[1])+a[0])c=!c}return c};
+// Patches are placed by explicit anatomical region quotas (CFG.patch.regions), not a blind uniform grid: each region is a box in a
+// face-aligned (u,v) frame (u lateral, v vertical from the brow line), tiled with its own rows x cols, at two scales (CFG.patch.scales).
+// Kept only where the whole square lies inside the shrunken face oval and outside grown eye/eyebrow/lip/nostril hulls. A rejection during
+// generation is attributed to its cause (boundary / eye / brow / mouth / nose) for the GEOMETRIC histogram. Patch id = scale:region:row-col,
+// stable across frames since it's a position within the region grid, not an absolute pixel coordinate.
+const CAUSE={eyeR:'eye',eyeL:'eye',browR:'brow',browL:'brow',lips:'mouth',nose:'nose'};
+function geom(lm,W,H){const P=i=>[lm[i].x*W,lm[i].y*H],a=P(234),b=P(454),fw=Math.hypot(b[0]-a[0],b[1]-a[1]),ex=[(b[0]-a[0])/fw,(b[1]-a[1])/fw],ey=[-ex[1],ex[0]];
+ const oval=hull(OVAL.map(P)),cen=[mean(oval.map(q=>q[0])),mean(oval.map(q=>q[1]))],safe=grow(oval,.95);
+ // eye/brow exclusion margin trimmed to 1.25x (was 1.45x) - it was eating well into the forehead/cheek area, see geom.test.js
+ const ex_=Object.entries(EXCL).map(([k,ids])=>[k,grow(hull(ids.map(P)),k==='nose'?1.6:k==='lips'?1.8:1.25)]);
+ const proj=([x,y])=>({u:((x-cen[0])*ex[0]+(y-cen[1])*ex[1])/fw,v:((x-cen[0])*ey[0]+(y-cen[1])*ey[1])/fw});
+ const browV=(proj(P(105)).v+proj(P(334)).v)/2,hairV=VS.clamp(proj(P(10)).v,browV-.62,browV-.18);
+ const out=[],geomHist={},regionCounts={},toXY=(u,v)=>[cen[0]+ex[0]*u*fw+ey[0]*v*fw,cen[1]+ex[1]*u*fw+ey[1]*v*fw];
+ for(const sc of CFG.patch.scales){const sz=CFG.patch.baseSize*sc.mult*fw,h=sz/2;
+  for(const R of CFG.patch.regions){const rk=R.name+(R.side<0?'-L':R.side>0?'-R':''),vR=R.name==='forehead'?[hairV+.12,browV-.06]:[browV+R.vR[0],browV+R.vR[1]];
+   const key=sc.tag+':'+rk;regionCounts[key]=regionCounts[key]||{cand:0,kept:0};
+   for(let row=0;row<R.rows;row++)for(let col=0;col<R.cols;col++){
+    const vt=R.rows>1?row/(R.rows-1):.5,ut=R.cols>1?col/(R.cols-1):.5,v=vR[0]+vt*(vR[1]-vR[0]),uu=R.uR[0]+ut*(R.uR[1]-R.uR[0]),u=R.side<0?-uu:uu;
+    const [x,y]=toXY(u,v),pts=[[x,y],[x-h,y-h],[x+h,y-h],[x-h,y+h],[x+h,y+h]];
+    regionCounts[key].cand++;
+    // center must be inside; corners only need a majority (>=3/5 total) - a patch anchored on skin shouldn't be dropped
+    // just because one corner grazes the (imprecise) oval boundary, when image-quality gating catches genuine non-skin content anyway.
+    let cause=(!inside(safe,x,y)||pts.filter(q=>inside(safe,q[0],q[1])).length<3)?'boundary':null;
+    if(!cause)for(const[k,poly]of ex_)if(pts.some(q=>inside(poly,q[0],q[1]))){cause=CAUSE[k];break}
+    if(cause){geomHist[cause]=(geomHist[cause]||0)+1;continue}
+    regionCounts[key].kept++;out.push({id:sc.tag+':'+rk+':'+row+'-'+col,scale:sc.tag,side:R.side,cx:x,cy:y,s:sz,reg:R.name})}}}
+ return{fw,oval,patches:out,cand:out.length+Object.values(geomHist).reduce((a,b)=>a+b,0),geomRej:Object.values(geomHist).reduce((a,b)=>a+b,0),geomHist,regionCounts}}
+// One getImageData for the face bounding box; per patch: 2-sigma luminance outlier rejection, shadows/highlights dropped, Cr/Cb for the skin test.
+// One getImageData for the face bounding box; per patch: 2-sigma luminance outlier rejection, shadows/highlights dropped, Cr/Cb for the skin test.
+function extract(gm,W,H){const xs=gm.oval.map(q=>q[0]),ys=gm.oval.map(q=>q[1]),x0=Math.max(0,Math.floor(Math.min(...xs))),y0=Math.max(0,Math.floor(Math.min(...ys))),
+ x1=Math.min(W,Math.ceil(Math.max(...xs))),y1=Math.min(H,Math.ceil(Math.max(...ys))),bw=x1-x0,bh=y1-y0;if(bw<8||bh<8)return[];
+ const d=cx.getImageData(x0,y0,bw,bh).data,Lm=o=>.299*d[o]+.587*d[o+1]+.114*d[o+2];
+ for(const p of gm.patches){const xa=Math.max(x0,Math.floor(p.cx-p.s/2)),xb=Math.min(x1,Math.ceil(p.cx+p.s/2)),ya=Math.max(y0,Math.floor(p.cy-p.s/2)),yb=Math.min(y1,Math.ceil(p.cy+p.s/2));
+  let n=0,s1=0,s2=0;for(let y=ya;y<yb;y++)for(let x=xa;x<xb;x++){const v=Lm(((y-y0)*bw+(x-x0))*4);s1+=v;s2+=v*v;n++}
+  if(n<16){p.bad='outside frame';continue}
+  const m=s1/n,sd=Math.sqrt(Math.max(0,s2/n-m*m));let R=0,G=0,B=0,k=0;
+  for(let y=ya;y<yb;y++)for(let x=xa;x<xb;x++){const o=((y-y0)*bw+(x-x0))*4,v=Lm(o);if(Math.abs(v-m)<=2*sd+1&&v>20&&v<245){R+=d[o];G+=d[o+1];B+=d[o+2];k++}}
+  p.k=k;p.n=n;if(k>0){p.r=R/k;p.g=G/k;p.b=B/k;p.lum=Lm2(p);p.cr=128+.5*p.r-.4187*p.g-.0813*p.b;p.cb=128-.1687*p.r-.3313*p.g+.5*p.b}}
+ return gm.patches}
+const Lm2=p=>.299*p.r+.587*p.g+.114*p.b,PC={high:'#2b8a3e',med:'#e08e00',rej:'#c92a2a',new:'#8a949c'};
+function drawPatch(p,cl){const h=p.s/2;ov.fillStyle=PC[cl]+'55';ov.strokeStyle=PC[cl];ov.lineWidth=1.5;ov.fillRect(p.cx-h,p.cy-h,p.s,p.s);ov.strokeRect(p.cx-h,p.cy-h,p.s,p.s)}
+function onResults(res){const t=frameT,W=$('v').videoWidth,H=$('v').videoHeight,L=res.multiFaceLandmarks||[];
+ S.fr.push(t);while(S.fr[0]<t-2)S.fr.shift();S.fps=S.fr.length>1?(S.fr.length-1)/(t-S.fr[0]):0;
+ $('o').width=W;$('o').height=H;ov.clearRect(0,0,W,H);
+ S.face=L.length===0?'none':L.length>1?'multi':'ok';
+ if(S.face!=='ok'){S.lc=null;return}
+ const lm=L[0],gm=geom(lm,W,H),c=[lm[1].x*W,lm[1].y*H];
+ if(gm.fw<CFG.minFacePx){S.face='small';S.lc=null;return}
+ if(S.lc){const inst=Math.hypot(c[0]-S.lc[0],c[1]-S.lc[1])/gm.fw/Math.max(t-S.lt,.01);S.motion=.85*S.motion+.15*inst}
+ S.lc=c;S.lt=t;S.mh.push([t,S.motion]);while(S.mh[0][0]<t-5)S.mh.shift();
+ if(t-S.lastS>1&&S.lastS)reset(false);   // face gap: never bridge missing data
+ const ps=extract(gm,W,H);S.geo=ps.filter(p=>p.scale==='L').length;S.geomRej=gm.geomRej;S.geomCand=gm.cand;S.geomHist=gm.geomHist;S.regionCounts=gm.regionCounts;
+ S.patchPx=(ps.find(p=>p.scale==='L')||{}).s||0;const ok=ps.filter(p=>!p.bad&&p.k>0);
+ if(ok.length>4){const mr=med(ok.map(p=>p.cr)),mb=med(ok.map(p=>p.cb));   // skin consistency: chroma must be near the median patch (both scales pooled - same skin, more robust median)
+  for(const p of ok)if(Math.abs(p.cr-mr)>CFG.patch.chromaTol||Math.abs(p.cb-mb)>CFG.patch.chromaTol)p.bad='non-skin chroma'}
+ const used=[];
+ for(const p of ps){if(p.scale==='L')S.preg[p.id]=p.reg;
+  const buf=p.scale==='L'?pb:pbM;   // CRITICAL: route by scale - pbM (diagnostic) must never merge into pb (production)
+  if(p.bad||!(p.k>0)){if(p.scale==='L'){S.pbad[p.id]=p.bad||'no usable pixels';S.pbadCat[p.id]='image';drawPatch(p,'rej')}continue}
+  if(p.scale==='L'){delete S.pbad[p.id];delete S.pbadCat[p.id]}
+  const b=buf[p.id]||(buf[p.id]={t:[],r:[],g:[],b:[],lum:p.lum,use:p.k/p.n});
+  if(b.t.length&&t-b.t.at(-1)>CFG.patch.gapReset){b.t=[];b.r=[];b.g=[];b.b=[]}   // per-patch buffer reset: only on a real gap, not ordinary frame jitter
+  b.t.push(t);b.r.push(p.r);b.g.push(p.g);b.b.push(p.b);b.lum=.9*b.lum+.1*p.lum;b.use=.9*b.use+.1*p.k/p.n;
+  b.mr=p.r;b.mg=p.g;b.mb=p.b;b.cr=p.cr;b.cb=p.cb;b.k=p.k;b.n=p.n;b.reg=p.reg;b.side=p.side;
+  while(b.t[0]<t-CFG.bufSec){b.t.shift();b.r.shift();b.g.shift();b.b.shift()}
+  if(p.scale==='L'){used.push(p.lum);drawPatch(p,S.pcls[p.id]||'new')}}   // only the production ("L") scale is drawn on the live overlay
+ if(used.length){S.lastS=t;S.lum=mean(used);S.ema=S.ema?.97*S.ema+.03*S.lum:S.lum;S.jump=.9*S.jump+.1*Math.abs(S.lum-S.ema)/(S.ema||1)}}
+// ---------- patch quality -> quality-weighted fusion -> processing ----------
+function series(cache,id,tE,Wsec,fsg){const k=id+'|'+Wsec;if(k in cache)return cache[k];const b=pb[id],t0=tE-Wsec;let o=null;   // uniform grid shared by all patches
+ if(b&&b.t.length>20){const i0=Math.max(0,b.t.findIndex(v=>v>=t0)-1),t=b.t.slice(i0),rs=a=>resample(t,a.slice(i0),fsg,t0,tE);o={r:rs(b.r),g:rs(b.g),b:rs(b.b)}}
+ return cache[k]=o}
+function mixOf(cache,ids,w,tE,Wsec,fsg,cover){const A=[];
+ ids.forEach((id,k)=>{const b=pb[id];if(!(w[k]>0)||!b||b.t.at(-1)<tE-.25||(b.t.at(-1)-Math.max(b.t[0],tE-Wsec))/Wsec<cover)return;const s=series(cache,id,tE,Wsec,fsg);if(s)A.push({w:w[k],s,m:[mean(s.r),mean(s.g),mean(s.b)]})});
+ if(!A.length)return null;const W=A.reduce((x,a)=>x+a.w,0),n=Math.min(...A.map(a=>a.s.g.length)),mix=(c,m)=>Array.from({length:n},(_,i)=>A.reduce((x,a)=>x+a.w*a.s[c][i]/a.m[m],0)/W);
+ return{R:mix('r',0),G:mix('g',1),B:mix('b',2),rawG:Array.from({length:n},(_,i)=>A.reduce((x,a)=>x+a.w*a.s.g[i],0)/W),n,cnt:A.length}}
+// Returns {reason, cat}. cat in GEOM (not applicable here - geometric exclusion happens before a patch ever reaches pb, see S.geomRej)
+// / IMAGE (exposure, skin-pixel count, chroma, tracking loss) / SIGNAL (history span, motion, and later: jump/spectral checks in analyze()).
+function gate(id,tE,Wsec,pkm){const b=pb[id],P=CFG.patch;
+ if(b.t.at(-1)<tE-.25)return{reason:S.pbad[id]||'left valid skin area',cat:S.pbadCat[id]||'image'};
+ if(b.use<P.minUse)return{reason:'few skin pixels ('+Math.round(b.use*100)+'%)',cat:'image'};
+ if(b.lum<P.lumLo)return{reason:'underexposed (lum '+b.lum.toFixed(0)+')',cat:'image'};
+ if(b.lum>P.lumHi)return{reason:'overexposed (lum '+b.lum.toFixed(0)+')',cat:'image'};
+ if((b.t.at(-1)-Math.max(b.t[0],tE-Wsec))/Wsec<P.minCover)return{reason:'short history',cat:'signal'};
+ if(pkm>=P.motionMax)return{reason:'excessive motion',cat:'signal'};return{reason:'',cat:''}}
+function analyze(tE,dur,pkm){const Whr=Math.min(CFG.hrWinSec,dur),P=CFG.patch,ids=Object.keys(pb),cache={};let best=null;
+ for(const id of ids){const b=pb[id];if(b.t.at(-1)>=tE-.25&&(!best||b.t.length>best.t.length))best=b}
+ if(!best)return null;
+ const i0=Math.max(0,best.t.findIndex(v=>v>=tE-Whr)),eff=(best.t.length-1-i0)/((tE-best.t[i0])||1);if(!(eff>5))return null;
+ S.eff=eff;const fsg=VS.clamp(Math.round(eff),15,30);   // grid follows the MEASURED frame rate
+ const rows=ids.map(id=>{const g=gate(id,tE,Whr,pkm);return{id,reg:pb[id].reg||'',status:'rejected',reason:g.reason,cat:g.cat,q:0,w:0,bpm:null,snr:null,amp:0,
+  lum:pb[id].lum,use:pb[id].use,mr:pb[id].mr,mg:pb[id].mg,mb:pb[id].mb,cr:pb[id].cr,cb:pb[id].cb,k:pb[id].k,n:pb[id].n}}),cand=[],bypassCand=[];
+ for(const r of rows){if(pb[r.id].t.length>1)bypassCand.push(r);
+  if(r.reason)continue;const s=series(cache,r.id,tE,Whr,fsg);
+  if(!s||s.g.length<fsg*5){r.reason='short history';r.cat='signal';continue}
+  const mg=mean(s.g)||1,gn=s.g.map(v=>v/mg),d=gn.slice(1).map((v,i)=>Math.abs(v-gn[i])),md=Math.max(med(d)||0,2e-4),jr=d.filter(v=>v>8*md).length/d.length;
+  if(jr>P.jumpMax){r.reason='unstable signal (outlier frames '+(jr*100).toFixed(1)+'%)';r.cat='signal';continue}   // robust: fraction of outlier frames, not one raw spike
+  cand.push(r)}
+ const t=now(),T0=Date.now();   // score stalest patches first, within a per-tick time budget (keeps the UI responsive)
+ const need=BYPASS?bypassCand:cand,todo=need.filter(r=>!S.pq[r.id]||t-S.pq[r.id].at>P.refresh).sort((a,b)=>(S.pq[a.id]?S.pq[a.id].at:-1)-(S.pq[b.id]?S.pq[b.id].at:-1));
+ for(const r of todo){if(Date.now()-T0>P.budget)break;const s=series(cache,r.id,tE,Whr,fsg);if(s&&s.g.length>=fsg*5)S.pq[r.id]={est:VS.patchEstimate(s.r,s.g,s.b,fsg),at:t}}
+ const scored=cand.filter(r=>S.pq[r.id]);cand.forEach(r=>{if(!S.pq[r.id]){r.reason='awaiting score';r.cat='signal'}});
+ const fw=VS.fuseWeights(scored.map(r=>S.pq[r.id].est));   // weight ~ quality^2, capped, spatially inconsistent patches -> 0
+ scored.forEach((r,i)=>{const e=S.pq[r.id].est;r.bpm=e.bpm;r.snr=e.snr;r.amp=e.amp;r.q=VS.patchQuality(e);r.w=fw.ok?fw.w[i]:0;r.status=r.w>0?'accepted':'rejected';r.cat='signal';
+  if(!r.w)r.reason=e.bpm==null?'no usable spectrum':r.q<=0?'weak band energy':fw.ok?'off-consensus ('+e.bpm.toFixed(0)+' vs '+fw.med.toFixed(0)+' BPM)':'no patch passed'});
+ const cont=scored.filter(r=>r.w>0),ok=fw.ok&&cont.length>=P.minAccepted;
+ for(const r of rows)S.pcls[r.id]=r.w>0?(r.q>=.66?'high':'med'):(r.reason==='awaiting score'?'new':'rej');
+ S.prow=rows;S.pmed=fw.med;
+ S.pc={geo:S.geo,geomRej:S.geomRej,geomCand:S.geomCand,cand:cand.length,scored:scored.length,rej:rows.length-cont.length,cont:cont.length,px:S.patchPx};
+ // ---- DEBUG_BYPASS_PATCH_SIGNAL_GATES: diagnostic only. Keeps geometry + image-quality gates (skin pixels/exposure/chroma), skips
+ // history-span, jump, spectral-quality and off-consensus gates, and the minAccepted floor. Equal-weighted. Never feeds S.hr/history/save.
+ if(BYPASS){const bc=bypassCand.filter(r=>{const s=series(cache,r.id,tE,Whr,fsg);return s&&s.g.length>=fsg*5});
+  const m=bc.length&&mixOf(cache,bc.map(r=>r.id),bc.map(()=>1),tE,Whr,fsg,0);
+  S.pcBypass=m?{n:bc.length,h:estimateHR(m.R,m.G,m.B,fsg,true)}:{n:bc.length,h:null}}else S.pcBypass=null;
+ S.cmp=oldStyleCompare(cache,rows,tE,Whr,fsg);
+ S.scaleCmp={large:scaleFuse(pb,tE,Whr,fsg),medium:scaleFuse(pbM,tE,Whr,fsg)};
+ const use=ok?cont:scored,w=ok?use.map(r=>r.w):use.map(()=>1),m=use.length&&mixOf(cache,use.map(r=>r.id),w,tE,Whr,fsg,P.minCover);   // !ok: equal weights, debug view only
+ if(!m)return{none:true,ok:false,cont:cont.length};
+ return{...m,fs:fsg,frames:best.t.length-i0,ok,cont:cont.length,ids:use.map(r=>r.id),w,tE}}
+// Diagnostic-only: recreate the OLD forehead/left-cheek/right-cheek design from the SAME patch buffers (equal-weight average of every
+// patch in each region that passes image-quality gating), to compare directly against the new quality-weighted dense-patch fusion.
+function oldStyleCompare(cache,rows,tE,Wsec,fsg){
+ const grp={forehead:[],lcheek:[],rcheek:[]};
+ for(const r of rows){if(r.cat==='image')continue;   // exclude only image-quality rejects (bad pixels); include signal-rejected patches so the OLD-style average reflects the same raw region signal the old system used
+  const b=pb[r.id],side=b&&b.side,k=r.reg==='forehead'?'forehead':side<0?'lcheek':side>0?'rcheek':null;if(k)grp[k].push(r.id)}
+ const out={};for(const k in grp){const ids=grp[k].filter(id=>{const b=pb[id];return b&&b.t.at(-1)>=tE-.25});if(ids.length<2){out[k]=null;continue}
+  const m=mixOf(cache,ids,ids.map(()=>1),tE,Wsec,fsg,0.3);out[k]=m?{n:ids.length,h:estimateHR(m.R,m.G,m.B,fsg)}:null}
+ return out}
+// Multi-scale comparison (diagnostic only, always computed): equal-weight fusion of every currently basic-valid patch at each
+// scale - "L" from the production buffer, "M" from the parallel diagnostic buffer - so the two are directly comparable without
+// either one's spectral quality gating being in the loop. Answers "does the larger patch actually give better SNR than the
+// medium one at the same spot", independent of whether either currently passes the full production trust gate.
+function scaleFuse(buf,tE,Wsec,fsg){const ids=Object.keys(buf).filter(id=>{const b=buf[id];return b.t.at(-1)>=tE-.25&&b.use>=CFG.patch.minUse&&b.lum>=CFG.patch.lumLo&&b.lum<=CFG.patch.lumHi});
+ if(ids.length<2)return{n:ids.length,h:null};const m=mixOf({},ids,ids.map(()=>1),tE,Wsec,fsg,0.3);return m?{n:ids.length,h:estimateHR(m.R,m.G,m.B,fsg)}:{n:ids.length,h:null}}
+// Demo is deliberately separate from the rPPG path above. It never changes patch gates, Green/CHROM/POS, consensus, or real-result saving.
+function demoTick(t){let d=S.demo;if(!d){d=S.demo={start:t,complete:false,saved:false,hr:75,rr:17,q:89,wave:null};}
+ const elapsed=Math.min(CFG.measureSec,t-d.start),p=elapsed/CFG.measureSec;
+ d.hr=75+3.8*Math.sin(elapsed*.32)+1.2*Math.sin(elapsed*.09); // smooth, deterministic: 70-80 BPM
+ d.rr=17+1.5*Math.sin(elapsed*.18+.7);                         // smooth, deterministic: 15-19 breaths/min
+ d.q=89+4.2*Math.sin(elapsed*.23+.2);                          // smooth, deterministic: 85-93%
+ const wf=30,n=300,t0=t-10;d.wave={fs:wf,t0,y:Array.from({length:n},(_,i)=>{const x=t0+i/wf,ph=2*Math.PI*(d.hr/60)*x;return Math.sin(ph)+.28*Math.sin(2*ph+.45)+.09*Math.sin(3*ph)})};
+ d.elapsed=elapsed;d.progress=Math.round(p*100);
+ if(elapsed<3){d.phase='FACE DETECTED';d.msg='Face detected. Starting simulated demonstration.'}
+ else if(elapsed<6){d.phase='PREPARING MEASUREMENT';d.msg='Preparing simulated measurement...'}
+ else if(elapsed<CFG.measureSec){d.phase='ANALYZING';d.msg=`Analyzing simulated vitals... ${Math.round(elapsed)}/${CFG.measureSec}s`}
+ else {d.phase='MEASUREMENT COMPLETE';d.msg='Measurement complete — simulated demo entry saved.';d.complete=true;if(!d.saved){d.saved=true;saveDemo(d)}}}
+async function saveDemo(d){const r={timestamp:Date.now(),heart_rate:Math.round(d.hr),respiratory_rate:Math.round(d.rr),signal_quality:Math.round(d.q),measurement_duration:CFG.measureSec,camera_fps:Math.round(S.fps)||null,lighting_quality:'Demo / simulated',motion_level:null,algorithm_agreement:null,mode:'DEMO / SIMULATED'};
+ try{await tx('readwrite',s=>s.add(r))}catch(e){d.msg='Measurement complete — simulated entry could not be saved: '+e.message}renderHist()}
+function process(){if(!running)return;const t=now();S.tick++;
+ const ids=Object.keys(pb).filter(id=>pb[id].t.length>1),tE=ids.length?Math.max(...ids.map(id=>pb[id].t.at(-1))):0,dur=ids.length?Math.max(...ids.map(id=>pb[id].t.at(-1)-pb[id].t[0])):0;
+ for(const id of Object.keys(pb))if(!pb[id].t.length||pb[id].t.at(-1)<tE-8){delete pb[id];delete S.pq[id];delete S.pcls[id]}
+ const pk=Math.max(0,...S.mh.filter(x=>x[0]>t-5).map(x=>x[1]));
+ if(S.face!=='ok'){S.demo=null;S.q=assess({face:S.face});S.wave=null;S.run=null;S.acc=null;S.hr=null;S.rr=null;S.hist=[];S.phase='READY';return ui()}
+ demoTick(t);
+ if(dur<CFG.minHrSec){S.q=null;S.wave=null;S.phase=dur<3?'STABILIZING':'COLLECTING';S.msg=`Collecting signal... ${Math.round(dur)}/${CFG.minHrSec}s`;S.hr=null;return ui()}
+ S.phase=S.saved?'COMPLETE':'ANALYZING';const c=analyze(tE,dur,pk);if(!c)return ui();
+ const h=c.none?null:estimateHR(c.R,c.G,c.B,c.fs,true);S.dbg=h?{h,c,win:c.n/c.fs}:null;
+ if(S.tick%2===0){if(h&&c.ok&&h.cons.n>=2)S.hist.push(h.cons.bpm);else S.hist=[];S.hist=S.hist.slice(-5)}
+ const range=S.hist.length>=3?Math.max(...S.hist)-Math.min(...S.hist):null;
+ const q=S.q=assess({face:'ok',fps:S.fps,motion:pk,lum:S.lum,lightJump:S.jump,cons:h?h.cons:{n:0,eligible:0,agreeN:0,conc:0},range,patchesOk:c.ok,patchN:c.cont}),ok=q.state==='GOOD'||q.state==='FAIR';
+ const wv=h&&(h.sigs.pos||h.sigs.chrom||h.sigs.green);S.wave=ok&&wv?{y:wv,t0:t-wv.length/c.fs,fs:c.fs}:null;
+ if(ok&&dur>=CFG.rrWinSec*.97&&t-S.rrLast>3){S.rrLast=t;const m=mixOf({},c.ids,c.w,c.tE,CFG.rrWinSec,c.fs,.97);   // RR: 30 s window, only patches that cover it
+  if(m&&m.cnt>=CFG.patch.minAccepted){const p=estimateHR(m.R,m.G,m.B,c.fs).sigs.pos,mg=mean(m.G),r=respiratory(m.G.map(v=>v/mg),p,c.fs);S.rr=r&&r.rr}else S.rr=null}
+ else if(!ok)S.rr=null;
+ S.hr=ok&&S.hist.length?med(S.hist.slice(-3)):null;S.msg=q.reasons.join(' · ')||(S.saved?'Measurement complete and saved.':'Measurement stable');
+ if(!ok){if(S.run!==null||S.saved)S.paused=true;S.run=null;S.acc=null;S.reacq=null;S.phase=S.paused?'PAUSED':'ANALYZING';if(S.paused)S.msg='Measurement paused. '+q.reasons.join(' · ')}
+ else if(S.paused){S.reacq=S.reacq||t;S.phase='REACQUIRING';S.msg='Signal reacquiring...';if(t-S.reacq>=CFG.reacquireSec){S.paused=false;S.reacq=null;S.recT=t}}
+ else if(!S.saved){S.run=S.run||t;S.acc=S.acc||{q:[],m:[],l:[],f:[],a:[],rr:[]};const a=S.acc;a.q.push(q.score);a.m.push(pk);a.l.push(q.parts.ls);a.f.push(S.fps);a.a.push(h.cons.n/3);if(S.rr)a.rr.push(S.rr);
+  const el=t-S.run;S.msg=`Measuring... ${Math.min(CFG.measureSec,Math.round(el))}/${CFG.measureSec}s. `+(q.reasons[0]||'');
+  if(el>=CFG.measureSec&&S.hist.length>=4&&range<=CFG.stabBpm)save(el)}
+ if(S.recT&&t-S.recT<3&&ok){S.msg='Signal recovered. Measurement resumed.'}
+ ui()}
+async function save(el){const a=S.acc,r={timestamp:Date.now(),heart_rate:Math.round(med(S.hist)*10)/10,respiratory_rate:a.rr.length>=3?Math.round(med(a.rr)*10)/10:null,
+ signal_quality:Math.round(mean(a.q)*100),measurement_duration:Math.round(el),camera_fps:Math.round(mean(a.f)),lighting_quality:mean(a.l)>.8?'Good':mean(a.l)>.5?'Fair':'Poor',
+ motion_level:Math.round(mean(a.m)*100)/100,algorithm_agreement:Math.round(mean(a.a)*100)/100};
+ S.saved=true;S.phase='COMPLETE';S.msg='Measurement complete and saved.';try{await tx('readwrite',s=>s.add(r))}catch(e){S.msg='Measurement complete but could not be saved: '+e.message}renderHist()}
+// ---------- UI ----------
+const COL={GOOD:'--good',FAIR:'--fair',POOR:'--poor',INVALID:'--bad'};
+function ui(){ui0();try{dbgUI()}catch(e){$('dbg').textContent='debug error: '+e.message}}
+function ui0(){const d=S.demo,q=S.q,st=d?'DEMO':(q?q.state:(S.phase==='READY'?'--':'...')),ok=d||q&&(st==='GOOD'||st==='FAIR');
+ $('badge').textContent=st;$('badge').style.background=`var(${COL[st]||'--mu'})`;$('phase').textContent=S.phase[0]+S.phase.slice(1).toLowerCase();
+ $('phase').textContent=d?d.phase:S.phase[0]+S.phase.slice(1).toLowerCase();
+ $('msg').textContent=S.face==='multi'?'Multiple faces detected. Please ensure only one person is visible.':S.face==='none'&&running?'Face not detected':S.face==='small'?'Face too small - move closer':d?d.msg:S.msg;
+ $('hr').textContent=d?Math.round(d.hr):S.hr!=null&&ok?Math.round(S.hr):'--';$('hrs').textContent=d?'BPM · simulated':S.hr!=null&&ok?'BPM':(q&&q.state!=='GOOD'&&q.state!=='FAIR'?'Signal quality too low':'BPM');
+ $('rr').textContent=d?Math.round(d.rr):S.rr!=null&&ok?Math.round(S.rr):'--';$('rrs').textContent=d?'breaths/min · simulated':S.rr!=null&&ok?'breaths/min':(dur30()?'Insufficient signal':'Needs ~30 s of signal');
+ $('q').textContent=d?Math.round(d.q)+'%':q?Math.round(q.score*100)+'%':'--';$('qs').textContent=d?'SIMULATED':q?q.state:'';
+ $('fps').textContent=running?S.fps.toFixed(0)+' FPS':'--';$('res').textContent=running?$('v').videoWidth+'x'+$('v').videoHeight:'';
+ const lq=!q||!q.parts?'--':q.parts.ls>.8?'Good':q.parts.ls>.5?'Fair':'Poor',mo=S.motion<CFG.motion.minor?'Low':S.motion<CFG.motion.major?'Minor':'High';
+ $('stat').innerHTML=`Face tracking: <b>${S.face==='ok'?'Tracking':S.face==='multi'?'Multiple faces':S.face==='small'?'Too small':'No face'}</b> · Lighting: <b>${lq}</b> · Motion: <b>${running?mo:'--'}</b><br>${d?`Demo progress: <b>${d.progress}%</b> · <b>DEMO / SIMULATED</b>`:`Skin patches: <b>${S.pc?S.pc.cont:'--'}</b> contributing / ${S.pc?S.pc.rej:'--'} rejected / ${S.geo} on face`}`}
+const dur30=()=>Object.values(pb).some(b=>b.t.length&&b.t.at(-1)-b.t[0]>=CFG.rrWinSec*.95);
+function drawWave(){const c=$('wave'),g=c.getContext('2d'),W=c.width=c.clientWidth*devicePixelRatio,H=c.height=150*devicePixelRatio;g.clearRect(0,0,W,H);
+ g.fillStyle=getComputedStyle(document.body).color;g.strokeStyle='#0b7285';g.lineWidth=2*devicePixelRatio;
+ const wave=S.demo?.wave||S.wave;if(!wave){g.globalAlpha=.6;g.font=14*devicePixelRatio+'px system-ui';g.fillText('No valid pulse signal',12,H/2);g.globalAlpha=1;return requestAnimationFrame(drawWave)}
+ const {y,t0,fs:wf}=wave,n=now(),win=10,mx=Math.max(...y.map(Math.abs))||1;g.beginPath();
+ y.forEach((v,i)=>{const x=W-(n-(t0+i/wf))/win*W,py=H/2-v/mx*H*.42;i?g.lineTo(x,py):g.moveTo(x,py)});g.stroke();requestAnimationFrame(drawWave)}
+function line(id,xs,ys,label){const c=$(id),g=c.getContext('2d'),W=c.width=c.clientWidth*devicePixelRatio,H=c.height=110*devicePixelRatio,tx=getComputedStyle(document.body).color;
+ g.font=11*devicePixelRatio+'px system-ui';g.fillStyle=tx;g.fillText(label,4,12*devicePixelRatio);const v=ys.filter(Number.isFinite);if(!v.length){g.globalAlpha=.6;g.fillText('No data',4,H/2);g.globalAlpha=1;return}
+ const lo=Math.min(...v),hi=Math.max(...v),sp=hi-lo||1,pad=18*devicePixelRatio,X=i=>pad+(xs.length>1?i/(xs.length-1):.5)*(W-2*pad),Y=y=>H-pad-(y-lo)/sp*(H-2.5*pad);
+ g.strokeStyle='#0b7285';g.lineWidth=2;g.beginPath();let f=1;ys.forEach((y,i)=>{if(!Number.isFinite(y))return;f?g.moveTo(X(i),Y(y)):g.lineTo(X(i),Y(y));f=0});g.stroke();
+ ys.forEach((y,i)=>Number.isFinite(y)&&g.fillRect(X(i)-2,Y(y)-2,4,4));g.fillText(hi.toFixed(0),4,H-4);g.fillText(lo.toFixed(0),W-30,H-4)}
+async function renderHist(){let r=(await load()).sort((a,b)=>a.timestamp-b.timestamp);const d=$('fd').value;if(d)r=r.filter(x=>new Date(x.timestamp).toLocaleDateString('en-CA')===d);
+ const s=summarize(r),dn=r.filter(x=>x.mode==='DEMO / SIMULATED').length;$('sum').textContent=s?`Saved entries: ${s.n} (${dn} DEMO / SIMULATED) · Avg HR ${s.avgHr.toFixed(0)} (min ${s.minHr.toFixed(0)}, max ${s.maxHr.toFixed(0)}) BPM · Avg RR ${s.avgRr==null?'--':s.avgRr.toFixed(0)} · Avg quality ${s.avgQ.toFixed(0)}%`:'No saved measurements.';
+ $('hist').innerHTML=r.slice().reverse().map(x=>`<tr><td>${new Date(x.timestamp).toLocaleString()}${x.mode?'<br><small>DEMO / SIMULATED</small>':''}</td><td>${x.heart_rate}</td><td>${x.respiratory_rate??'--'}</td><td>${x.signal_quality}%</td><td>${x.measurement_duration}s · ${x.camera_fps??'--'} FPS · light ${x.lighting_quality} · agreement ${x.algorithm_agreement==null?'--':Math.round(x.algorithm_agreement*100)+'%'}</td><td><button class="s" data-id="${x.id}">Delete</button></td></tr>`).join('');
+ const xs=r.map(x=>x.timestamp);line('c1',xs,r.map(x=>x.heart_rate),'Heart rate (BPM)');line('c2',xs,r.map(x=>x.respiratory_rate),'Respiratory rate');line('c3',xs,r.map(x=>x.signal_quality),'Signal quality (%)')}
+$('hist').onclick=async e=>{const id=+e.target.dataset.id;if(id){await tx('readwrite',s=>s.delete(id));renderHist()}};
+$('fd').onchange=renderHist;$('clr').onclick=()=>{$('fd').value='';renderHist()};
+$('go').onclick=()=>running?(stop(),reset(true),ui()):start();$('again').onclick=()=>{S.saved=false;S.run=null;S.acc=null;S.demo=null;S.phase='ANALYZING';S.msg=''};
+// ---------- debug ----------
+function pad(x,n){return(x+' '.repeat(n)).slice(0,n)}
+function patchLines(){const pc=S.pc;if(!pc)return['PATCHES  none evaluated yet'];
+ const L=[`PATCH SIZE  L(production) side ${pc.px.toFixed(1)} px (~${(pc.px*pc.px).toFixed(0)} px^2 before skin/outlier masking) | GEOMETRY  grid cells tried ${pc.geomCand} | L kept ${pc.geo} this frame`,
+ `GEOMETRIC EXCLUSION (this frame, both scales) - boundary ${S.geomHist.boundary||0} | eye ${S.geomHist.eye||0} | brow ${S.geomHist.brow||0} | mouth ${S.geomHist.mouth||0} | nose ${S.geomHist.nose||0}`,
+ `TRACKED (accumulated, incl. patches the face has since moved off) ${S.prow.length} | candidates for scoring ${pc.cand} | scored ${pc.scored} | rejected ${pc.rej} | CONTRIBUTING ${pc.cont} (need >= ${CFG.patch.minAccepted}) | spatial median ${S.pmed==null?'--':S.pmed.toFixed(1)} BPM`,''];
+ L.push('REGION QUOTAS (candidates tried -> kept, this frame, both scales)');
+ const rk=Object.keys(S.regionCounts||{}).sort();for(let i=0;i<rk.length;i+=2)L.push('  '+rk.slice(i,i+2).map(k=>pad(k,18)+S.regionCounts[k].cand+'->'+S.regionCounts[k].kept).join('   '));
+ L.push('');
+ const cats={image:[],signal:[]},rj={image:{},signal:{}};
+ for(const r of S.prow)if(!(r.w>0)){const c=r.cat==='image'?'image':'signal';cats[c].push(r);const k=r.reason.replace(/\s*\(.*\)/,'');rj[c][k]=(rj[c][k]||0)+1}
+ L.push('REJECTION REASONS','  A. IMAGE-QUALITY ('+cats.image.length+'): '+(Object.entries(rj.image).map(([k,v])=>k+' x'+v).join(', ')||'-'),
+  '  B. SIGNAL-QUALITY ('+cats.signal.length+'): '+(Object.entries(rj.signal).map(([k,v])=>k+' x'+v).join(', ')||'-'),'');
+ L.push('PATCH  region        lum  R,G,B          Cr,Cb    px(use/tot) amp%  BPM   SNR-dB  quality weight  status');
+ for(const r of [...S.prow].sort((a,b)=>b.w-a.w||b.q-a.q).slice(0,16))
+  L.push(pad(r.id,7)+pad(r.reg,13)+pad(r.lum==null?'--':r.lum.toFixed(0),5)+pad(r.mr==null?'--':[r.mr,r.mg,r.mb].map(v=>v.toFixed(0)).join(','),15)+pad(r.cr==null?'--':r.cr.toFixed(0)+','+r.cb.toFixed(0),9)+
+   pad(r.k==null?'--':r.k+'/'+r.n,12)+pad(r.amp.toFixed(2),6)+pad(r.bpm==null?'--':r.bpm.toFixed(0),6)+pad(r.snr==null?'--':r.snr.toFixed(1),8)+pad(r.q.toFixed(2),8)+pad((r.w*100).toFixed(1)+'%',8)+(r.w>0?'ACCEPTED':'REJECTED: '+r.reason));
+ const fmtC=o=>{if(!o||!o.h)return'  no valid patches this window';const e=o.h.est,c=o.h.cons,amp=k=>o.h.sigs[k]?(VS.std(o.h.sigs[k])*100).toFixed(2)+'%':'--';
+  return['green','chrom','pos'].map(k=>pad(k,6)+(e[k]?e[k].bpm.toFixed(0)+' BPM (SNR '+e[k].snr.toFixed(1)+', q '+e[k].conc.toFixed(2)+', amp '+amp(k)+')':'--')).join(' | ')+'  consensus '+(c.bpm==null?'--':c.bpm.toFixed(0)+' BPM ('+c.n+'/3)')+' ['+o.n+' patches]'};
+ L.push('','MULTI-SCALE COMPARISON (diagnostic - equal-weight fusion of all image-quality-passing patches, no spectral gating, at each scale)');
+ if(S.scaleCmp){L.push(pad('LARGE ("L")',13)+fmtC(S.scaleCmp.large));L.push(pad('MEDIUM ("M")',13)+fmtC(S.scaleCmp.medium))}
+ L.push('','OLD-STYLE 3-REGION vs NEW DENSE-PATCH (diagnostic - same patch buffers, old = equal-weight average per region, new = quality-weighted fusion)');
+ if(S.cmp)for(const k of['forehead','lcheek','rcheek'])L.push(pad(k.toUpperCase(),10)+fmtC(S.cmp[k]));
+ if(S.pcBypass)L.push('','DEBUG_BYPASS_PATCH_SIGNAL_GATES output (DIAGNOSTIC ONLY - never used for the reported HR/RR/history):',
+  S.pcBypass.h?fmtC({h:S.pcBypass.h,n:S.pcBypass.n}):'  ['+S.pcBypass.n+' patches had enough samples, but none produced a usable spectrum]');
+ return L}
+function dbgUI(){const d=S.dbg,f=x=>x==null?'--':x.toFixed(1);
+ if(!d){$('dbg').textContent=S.pc?patchLines().join('\n'):'No analysis yet ('+S.phase+'; needs '+CFG.minHrSec+' s of tracked face signal).';return}
+ const {h,c,win}=d,e=h.est,cs=h.cons,any=Object.values(e).find(x=>x);
+ const L=[`TIMING    expected ${expFps} FPS | measured ${f(S.eff)} FPS | grid ${c.fs} Hz | frames in buffer ${c.frames} | buffer ${f(c.n/c.fs)} s | HR window ${f(win)} s | resolution ${f(any&&any.res)} BPM/bin | agree tol +-${f(cs.tol)} BPM`,'',
+ 'METHOD   BPM     Hz      peak-power  quality  SNR-dB  edge  peaks (BPM:rel-power)'];
+ for(const k of ['green','chrom','pos']){const x=e[k];L.push(pad(k.toUpperCase(),9)+(x?[pad(f(x.bpm),7),pad(x.hz.toFixed(3),7),pad(x.power.toExponential(1),11),pad(x.conc.toFixed(2),8),pad(f(x.snr),7),pad(x.edge?'EDGE':'-',5),x.peaks.map(p=>p.bpm.toFixed(0)+':'+p.rel.toFixed(2)).join(' ')].join(' '):'no estimate (insufficient data / filter guard)'))}
+ L.push('');for(const k of ['green','chrom','pos'])L.push(pad(k.toUpperCase(),7)+pad(e[k]?f(e[k].bpm)+' BPM':'--',11)+'| '+cs.reasons[k]);
+ const bp=Object.values(e).filter(Boolean).map(x=>x.bpm);
+ L.push('',`AGREEMENT ${cs.agreeN}/3 methods within +-${f(cs.tol)} BPM -> ${f(cs.agreeBpm)} BPM (spread, all methods ${bp.length>1?f(Math.max(...bp)-Math.min(...bp)):'--'}) | TRUST ${cs.n}/3 pass the SNR gate (>= +${CFG.minSnrDb} dB) | CONSENSUS ${f(cs.bpm)} BPM | dominant ${cs.bpm==null?'--':(cs.bpm/60).toFixed(3)} Hz`,'',...patchLines());
+ $('dbg').textContent=L.join('\n');drawDbg(d)}
+function drawDbg(d){const {h,c}=d,dp=devicePixelRatio,T=$('dbgT'),g=T.getContext('2d'),W=T.width=T.clientWidth*dp,H=T.height=340*dp,hn=CFG.hrWinSec*c.fs,sl=a=>a.slice(-hn),col=getComputedStyle(document.body).color;
+ const G=sl(c.G),nrm=VS.detrend(G.map(v=>v/(mean(G)||1))),tr=[['raw green (gray level)',sl(c.rawG)],['normalized green (G/mean, detrended)',nrm],['GREEN filtered',h.sigs.green],['CHROM filtered',h.sigs.chrom],['POS filtered',h.sigs.pos]];
+ g.clearRect(0,0,W,H);g.font=11*dp+'px system-ui';const rh=H/tr.length;
+ tr.forEach(([nm,y],r)=>{g.fillStyle=col;g.fillText(nm,4,r*rh+12*dp);if(!y)return;const m=mean(y),ex=Math.max(...y.map(v=>Math.abs(v-m)))||1;g.strokeStyle='#0b7285';g.beginPath();y.forEach((v,i)=>{const x=i/(y.length-1)*W,py=r*rh+rh/2-(v-m)/ex*rh*.38;i?g.lineTo(x,py):g.moveTo(x,py)});g.stroke()});
+ const P=$('dbgP'),q=P.getContext('2d'),w2=P.width=P.clientWidth*dp,h2=P.height=160*dp,lo=.3,hi=4,X=f=>(f-lo)/(hi-lo)*w2;q.clearRect(0,0,w2,h2);
+ q.fillStyle='rgba(11,114,133,.12)';q.fillRect(X(CFG.hrBand[0]),0,X(CFG.hrBand[1])-X(CFG.hrBand[0]),h2);q.font=11*dp+'px system-ui';
+ const curve=(f,p,cl,lab,hz)=>{let mx=0;for(let i=0;i<f.length;i++)if(f[i]>=lo&&f[i]<=hi)mx=Math.max(mx,p[i]);q.strokeStyle=cl;q.beginPath();let s=0;
+  for(let i=0;i<f.length;i++){if(f[i]<lo||f[i]>hi)continue;const py=h2-4-p[i]/(mx||1)*(h2-18*dp);s?q.lineTo(X(f[i]),py):q.moveTo(X(f[i]),py);s=1}q.stroke();if(hz){q.fillStyle=cl;q.fillText(lab,X(hz)+3,12*dp)}};
+ const raw=VS.welch(nrm,c.fs,CFG.segFrac);if(raw)curve(raw.f,raw.p,'#888','',0);   // unfiltered spectrum: shows illumination / breathing / AE drift
+ [['green','#2b8a3e'],['chrom','#e08e00'],['pos','#c92a2a']].forEach(([k,cl])=>{const x=h.est[k];if(x&&x.spec)curve(x.spec.f,x.spec.p,cl,k+' '+x.bpm.toFixed(0),x.hz)});
+ q.fillStyle=col;q.fillText('PSD 0.3-4 Hz, each curve normalised to its own max. gray = unfiltered normalized green; shaded = HR band',4,h2-5*dp)}
+// validation mode
+let V=[];try{V=JSON.parse(localStorage.vsVal||'[]').filter(Array.isArray)}catch(e){}
+function renderVal(){const f=k=>{const s=agreementStats(V.filter(p=>p[k]&&p[k][0]!=null).map(p=>p[k]));return s?`n=${s.n} · MAE ${s.mae.toFixed(2)} · RMSE ${s.rmse.toFixed(2)} · mean error ${s.bias.toFixed(2)} · r ${s.r==null?'n/a':s.r.toFixed(2)}`+(s.n>=10?` · Bland-Altman limits [${s.loaLo.toFixed(1)}, ${s.loaHi.toFixed(1)}]`:' · (need 10+ pairs for limits of agreement)'):'No validation data available.'};
+ $('val').innerHTML=`HR: ${f(0)}<br>RR: ${f(1)}`}
+$('addv').onclick=()=>{const g=id=>$(id).value===''?null:+$(id).value;V.push([[g('rh'),g('vh')],[g('rr2'),g('vr')]].map(p=>p[0]!=null&&p[1]!=null?p:[null,null]));try{localStorage.vsVal=JSON.stringify(V)}catch(e){}['rh','vh','rr2','vr'].forEach(i=>$(i).value='');renderVal()};
+$('clv').onclick=()=>{V=[];try{delete localStorage.vsVal}catch(e){}renderVal()};
+V=V.map(p=>p.length===2&&Array.isArray(p[0])?p:[[null,null],[null,null]]);
+$('bypass').onchange=e=>{BYPASS=e.target.checked};
+navigator.mediaDevices?.addEventListener?.('devicechange',listCams);listCams();renderHist();renderVal();drawWave();setInterval(process,500);
+</script></body></html>
